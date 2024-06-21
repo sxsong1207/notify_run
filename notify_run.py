@@ -4,6 +4,7 @@ import subprocess
 import smtplib
 import os
 import sys
+import platform
 import configparser
 import datetime
 from email.mime.text import MIMEText
@@ -68,7 +69,7 @@ def main():
     command = " ".join(sys.argv[1:])
     config = load_config()
 
-    host_name = os.uname()[1]
+    host_name = platform.node()
     smtp_server = config["SMTP"]["server"]
     smtp_port = config["SMTP"].getint("port")
     smtp_user = config["SMTP"]["user"]
@@ -92,8 +93,9 @@ Standard Output:
 Standard Error:
 {stderr}
 """
-
-    send_email(email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password)
+    if duration.total_seconds() > 60:
+        # Send an email if the command takes more than 1 minute
+        send_email(email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password)
 
     print(stdout)
     if stderr:
