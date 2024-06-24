@@ -9,6 +9,7 @@ setup(
     install_requires=[
         # Add your project dependencies here
         'configparser',
+        'py7zr'
     ],
     entry_points={
         'console_scripts': [
