@@ -25,7 +25,7 @@ def create_config():
         # Create a default configuration file
         default_config = configparser.ConfigParser()
         default_config["SMTP"] = {"server": "smtp.gmail.com", "port": "587", "user": "", "password": ""}
-        default_config["Notification"] = {"to_address": ""}
+        default_config["Notification"] = {"to_address": "", "minimal_running_seconds": 10}
         default_config.write(open(CONFIG_FILE, "w"))
         print(f"Configuration file created at {CONFIG_FILE}.")
 
@@ -134,6 +134,8 @@ def main():
     smtp_user = config["SMTP"]["user"]
     smtp_password = config["SMTP"]["password"]
     to_address = config["Notification"]["to_address"]
+    
+    minimal_notify_running_seconds = config['Notification'].getint('minimal_running_seconds', 10)
 
     
     if len(sys.argv) < 2:
@@ -171,7 +173,7 @@ Start Time: {start_time}
 End Time: {end_time}
 Duration: {duration}
 """
-    if duration < datetime.timedelta(seconds=10):
+    if duration < datetime.timedelta(seconds=minimal_notify_running_seconds):
         print(f"Skipping email notification as the command completed in less than 10 seconds.")
         print(email_body_header)
         sys.exit(returncode)
