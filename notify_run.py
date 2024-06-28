@@ -117,13 +117,15 @@ def compress_logs(text:str, tmpdir: os.PathLike, file_name:str):
     print(log_file)
     return log_zip
 
+def print_usage():
+    print(f"Usage: python {os.path.basename(__file__)} <command>")
+    print("Options:")
+    print("  --config: Show the configuration file path")
+    print("  --test: Test the email configuration")
+    
+    
 def main():
     create_config()
-    if len(sys.argv) < 2:
-        print("Usage: python notify_run.py <command>")
-        sys.exit(1)
-
-    command = " ".join(sys.argv[1:])
     config = load_config()
 
     host_name = platform.node()
@@ -133,6 +135,29 @@ def main():
     smtp_password = config["SMTP"]["password"]
     to_address = config["Notification"]["to_address"]
 
+    
+    if len(sys.argv) < 2:
+        print_usage()
+        sys.exit(1)
+        
+    if len(sys.argv) == 2:
+        if sys.argv[1] == "--config":
+            print(f"Configuration file is stored at {CONFIG_FILE}")
+            sys.exit(0)
+        elif sys.argv[1] == "--test":
+            print("Testing email configuration...")
+            email_subject = f"Host: {host_name} Test Email from NotifyRun"
+            email_body = f"Test email from NotifyRun at {datetime.datetime.now()}, your configuration is correct."
+            if not send_email(email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, []):
+                print("Error sending email, please check the configuration.")
+                sys.exit(1)
+            sys.exit(0)
+        elif sys.argv[1] == "--help" or sys.argv[1] == "-h":
+            print_usage()
+            sys.exit(0)
+
+    #### Regular command execution    
+    command = " ".join(sys.argv[1:])
     returncode, stdout, stderr, start_time, end_time, duration = execute_command(command)
 
     email_subject = f"Host: '{host_name}' Completed with Return Code {returncode}"
