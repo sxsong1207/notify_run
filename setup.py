@@ -4,7 +4,7 @@ setup(
     name='notify_run',
     author="Shuang Song",
     author_email="sxsong1207@gmail.com",
-    version='0.1.2',
+    version='0.1.3',
     py_modules=['notify_run'],
     install_requires=[
         # Add your project dependencies here

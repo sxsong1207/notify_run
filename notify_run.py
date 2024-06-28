@@ -17,25 +17,50 @@ from pathlib import Path
 import py7zr
 import shutil
 
+
+def create_config(config_file):
+    # Create a default configuration file
+    default_config = configparser.ConfigParser()
+    default_config["General"] = {"stdout_prefix": "[O]", "stderr_prefix": "[E]", "minimal_running_seconds": 10}
+    default_config["SMTP"] = {"server": "smtp.gmail.com", "port": "587", "user": "", "password": ""}
+    default_config["Notification"] = {"to_address": ""}
+
+    if not os.path.exists(config_file):
+        default_config.write(open(config_file, "w"))
+        print(f"Configuration file created at {config_file}.")
+    else:
+        existing_config = configparser.ConfigParser()
+        existing_config.read(config_file)
+        # recursively update the existing config with the default config
+        default_config.read_dict(existing_config)
+        default_config.write(open(config_file, "w"))
+        print(f"Configuration file updated at {config_file}.")
+
+def load_config(config_file):
+    config = configparser.ConfigParser()
+    if not os.path.exists(config_file):
+        print(f"Configuration file {config_file} not found.")
+        sys.exit(1)
+    config.read(config_file)
+    return config
+
+
 # Configuration file path
 CONFIG_FILE = os.path.expanduser("~/.notify_run")
+create_config(CONFIG_FILE)
+config = load_config(CONFIG_FILE)
 
-def create_config():
-    if not os.path.exists(CONFIG_FILE):
-        # Create a default configuration file
-        default_config = configparser.ConfigParser()
-        default_config["SMTP"] = {"server": "smtp.gmail.com", "port": "587", "user": "", "password": ""}
-        default_config["Notification"] = {"to_address": "", "minimal_running_seconds": 10}
-        default_config.write(open(CONFIG_FILE, "w"))
-        print(f"Configuration file created at {CONFIG_FILE}.")
+stdout_prefix = config["General"]["stdout_prefix"]
+stderr_prefix = config["General"]["stderr_prefix"]
+minimal_notify_running_seconds = float(config["General"]["minimal_running_seconds"])
 
-def load_config():
-    config = configparser.ConfigParser()
-    if not os.path.exists(CONFIG_FILE):
-        print(f"Configuration file {CONFIG_FILE} not found.")
-        sys.exit(1)
-    config.read(CONFIG_FILE)
-    return config
+host_name = platform.node()
+smtp_server = config["SMTP"]["server"]
+smtp_port = config["SMTP"].getint("port")
+smtp_user = config["SMTP"]["user"]
+smtp_password = config["SMTP"]["password"]
+to_address = config["Notification"]["to_address"]
+#### End configuration
 
 def send_email(subject, body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, attachments=[]):
     msg = MIMEMultipart()
@@ -72,19 +97,19 @@ def send_email(subject, body, to_address, smtp_server, smtp_port, smtp_user, smt
 def execute_command(command):
     start_time = datetime.datetime.now()
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
+
     stdout_log = []
     stderr_log = []
-    
+
     # Function to handle real-time output
     def read_output(pipe, prefix, log):
-        for line in iter(pipe.readline, ''):
-            print(f'[{prefix}]{line}', end='')
+        for line in iter(pipe.readline, ""):
+            print(f"{prefix}{line}", end="")
             log.append(line)  # Keep log of the output
-            
+
     # Create threads to read stdout and stderr in real-time and log them
-    stdout_thread = threading.Thread(target=read_output, args=(process.stdout, 'O', stdout_log))
-    stderr_thread = threading.Thread(target=read_output, args=(process.stderr, 'E', stderr_log))
+    stdout_thread = threading.Thread(target=read_output, args=(process.stdout, stdout_prefix, stdout_log))
+    stderr_thread = threading.Thread(target=read_output, args=(process.stderr, stderr_prefix, stderr_log))
 
     stdout_thread.start()
     stderr_thread.start()
@@ -95,53 +120,41 @@ def execute_command(command):
 
     process.stdout.close()
     process.stderr.close()
-            
+
     end_time = datetime.datetime.now()
-    stdout_log_str = ''.join(stdout_log)
-    stderr_log_str = ''.join(stderr_log)
+    stdout_log_str = "".join(stdout_log)
+    stderr_log_str = "".join(stderr_log)
 
     duration = end_time - start_time
     return process.returncode, stdout_log_str, stderr_log_str, start_time, end_time, duration
 
-def compress_logs(text:str, tmpdir: os.PathLike, file_name:str):
+
+def compress_logs(text: str, tmpdir: os.PathLike, file_name: str):
     tmpdir_path = Path(tmpdir)
     tmpdir_path.mkdir(parents=True, exist_ok=True)
-    
-    log_file = tmpdir_path / f'{file_name}.txt'
-    log_zip = tmpdir_path / f'{file_name}.7z'
-    
+
+    log_file = tmpdir_path / f"{file_name}.txt"
+    log_zip = tmpdir_path / f"{file_name}.7z"
+
     log_file.absolute().write_text(text)
-    with py7zr.SevenZipFile(log_zip, 'w') as archive:
+    with py7zr.SevenZipFile(log_zip, "w") as archive:
         archive.write(log_file, log_file.name)
     log_file.unlink(missing_ok=True)
-    print(log_file)
     return log_zip
+
 
 def print_usage():
     print(f"Usage: python {os.path.basename(__file__)} <command>")
     print("Options:")
     print("  --config: Show the configuration file path")
     print("  --test: Test the email configuration")
-    
-    
+
+
 def main():
-    create_config()
-    config = load_config()
-
-    host_name = platform.node()
-    smtp_server = config["SMTP"]["server"]
-    smtp_port = config["SMTP"].getint("port")
-    smtp_user = config["SMTP"]["user"]
-    smtp_password = config["SMTP"]["password"]
-    to_address = config["Notification"]["to_address"]
-    
-    minimal_notify_running_seconds = config['Notification'].getint('minimal_running_seconds', 10)
-
-    
     if len(sys.argv) < 2:
         print_usage()
         sys.exit(1)
-        
+
     if len(sys.argv) == 2:
         if sys.argv[1] == "--config":
             print(f"Configuration file is stored at {CONFIG_FILE}")
@@ -150,7 +163,9 @@ def main():
             print("Testing email configuration...")
             email_subject = f"Host: {host_name} Test Email from NotifyRun"
             email_body = f"Test email from NotifyRun at {datetime.datetime.now()}, your configuration is correct."
-            if not send_email(email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, []):
+            if not send_email(
+                email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, []
+            ):
                 print("Error sending email, please check the configuration.")
                 sys.exit(1)
             sys.exit(0)
@@ -158,7 +173,7 @@ def main():
             print_usage()
             sys.exit(0)
 
-    #### Regular command execution    
+    #### Regular command execution
     command = " ".join(sys.argv[1:])
     returncode, stdout, stderr, start_time, end_time, duration = execute_command(command)
 
@@ -178,29 +193,33 @@ Duration: {duration}
         print(email_body_header)
         sys.exit(returncode)
 
-    tempdir = tempfile.TemporaryDirectory('notifyrun')
+    tempdir = tempfile.TemporaryDirectory("notifyrun")
     try:
         if len(stdout) + len(stderr) > 10:
             # Compress logs if they are too large
-            stdout_zip = compress_logs(stdout, tempdir.name, 'stdout')
-            stderr_zip = compress_logs(stderr, tempdir.name, 'stderr')
+            stdout_zip = compress_logs(stdout, tempdir.name, "stdout")
+            stderr_zip = compress_logs(stderr, tempdir.name, "stderr")
             attachments = [stdout_zip, stderr_zip]
             email_body = f"{email_body_header}\nStandard Output and Error are attached as compressed files.\n"
         else:
             email_body = f"{email_body_header}\nStandard Output:\n{stdout}\nStandard Error:\n{stderr}\n"
-        
-        if not send_email(email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, attachments):
+
+        if not send_email(
+            email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, attachments
+        ):
             print(f"Error sending email, Temporary files are stored at {tempdir.name}")
             print("Trying the fallback method...")
             email_body = f"{email_body_header}\nError sending email, Temporary files are stored at {tempdir.name}"
-            if not send_email(email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, []):
+            if not send_email(
+                email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, []
+            ):
                 print("Error sending email, please check the configuration.")
         else:
             tempdir.cleanup()
     except Exception as e:
         print(f"Error during email preparation: {e}")
         print(f"Temporary files are stored at {tempdir.name}")
-    
+
     sys.exit(returncode)
 
 
