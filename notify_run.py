@@ -18,23 +18,35 @@ import py7zr
 import shutil
 
 
-def create_config(config_file):
+def default_config():
     # Create a default configuration file
-    default_config = configparser.ConfigParser()
-    default_config["General"] = {"stdout_prefix": "[O]", "stderr_prefix": "[E]", "minimal_running_seconds": 10}
-    default_config["SMTP"] = {"server": "smtp.gmail.com", "port": "587", "user": "", "password": ""}
-    default_config["Notification"] = {"to_address": ""}
+    default_config_ = configparser.ConfigParser()
+    default_config_["General"] = {
+        "stdout_prefix": "[O]",
+        "stderr_prefix": "[E]",
+        "minimal_running_seconds": 10,
+        "stdout_head_lines": 50,
+        "stdout_tail_lines": 50,
+        "stderr_head_lines": 50,
+        "stderr_tail_lines": 50,
+    }
+    default_config_["SMTP"] = {"server": "smtp.gmail.com", "port": "587", "user": "", "password": ""}
+    default_config_["Notification"] = {"to_address": ""}
+    return default_config_
 
+
+def create_or_update_config(config_file):
+    default_config_ = default_config()
     if not os.path.exists(config_file):
-        default_config.write(open(config_file, "w"))
+        default_config_.write(open(config_file, "w"))
         print(f"Configuration file created at {config_file}.")
     else:
         existing_config = configparser.ConfigParser()
         existing_config.read(config_file)
         # recursively update the existing config with the default config
-        default_config.read_dict(existing_config)
-        default_config.write(open(config_file, "w"))
-        print(f"Configuration file updated at {config_file}.")
+        default_config_.read_dict(existing_config)
+        default_config_.write(open(config_file, "w"))
+
 
 def load_config(config_file):
     config = configparser.ConfigParser()
@@ -47,12 +59,16 @@ def load_config(config_file):
 
 # Configuration file path
 CONFIG_FILE = os.path.expanduser("~/.notify_run")
-create_config(CONFIG_FILE)
+create_or_update_config(CONFIG_FILE)
 config = load_config(CONFIG_FILE)
 
 stdout_prefix = config["General"]["stdout_prefix"]
 stderr_prefix = config["General"]["stderr_prefix"]
-minimal_notify_running_seconds = float(config["General"]["minimal_running_seconds"])
+minimal_notify_running_seconds = config["General"].getfloat("minimal_running_seconds")
+stdout_head_lines = config["General"].getint("stdout_head_lines")
+stdout_tail_lines = config["General"].getint("stdout_tail_lines")
+stderr_head_lines = config["General"].getint("stderr_head_lines")
+stderr_tail_lines = config["General"].getint("stderr_tail_lines")
 
 host_name = platform.node()
 smtp_server = config["SMTP"]["server"]
@@ -61,6 +77,46 @@ smtp_user = config["SMTP"]["user"]
 smtp_password = config["SMTP"]["password"]
 to_address = config["Notification"]["to_address"]
 #### End configuration
+
+def compose_email_body(command, returncode, stdout, stderr, start_time, end_time, duration):
+    stdout_lines = stdout.split("\n")
+    stderr_lines = stderr.split("\n")
+
+    if len(stdout_lines) > stdout_head_lines + stdout_tail_lines:
+        stdout_head_text = "\n".join(stdout_lines[:stdout_head_lines])
+        stdout_tail_text = "\n".join(stdout_lines[-stdout_tail_lines:])
+        skipped_lines = len(stdout_lines) - stdout_head_lines - stdout_tail_lines
+        stdout_text = f"{stdout_head_text}\n\n  <-- skip {skipped_lines} lines  -->\n\n{stdout_tail_text}"
+    else:
+        stdout_text = stdout
+
+    if len(stderr_lines) > stderr_head_lines + stderr_tail_lines:
+        stderr_head_text = "\n".join(stderr_lines[:stderr_head_lines])
+        stderr_tail_text = "\n".join(stderr_lines[-stderr_tail_lines:])
+        skipped_lines = len(stderr_lines) - stderr_head_lines - stderr_tail_lines
+        stderr_text = f"{stderr_head_text}\n\n  <-- skip {skipped_lines} lines -->\n\n{stderr_tail_text}"
+    else:
+        stderr_text = stderr
+
+    email_body = f"""==== NotifyRun ====
+Command: {command}
+Return Code: {returncode}
+
+Start Time: {start_time}
+End Time: {end_time}
+Duration: {duration}
+========
+STDOUT:
+{stdout_text}
+========
+STDERR:
+{stderr_text}
+========
+"""
+    print("=============================")
+    print(email_body)
+    return email_body
+
 
 def send_email(subject, body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, attachments=[]):
     msg = MIMEMultipart()
@@ -178,19 +234,11 @@ def main():
     returncode, stdout, stderr, start_time, end_time, duration = execute_command(command)
 
     email_subject = f"Host: '{host_name}' Completed with Return Code {returncode}"
-    email_body_header = f"""================
-NotifyRun
-================
-Command: {command}
-Return Code: {returncode}
+    email_body = compose_email_body(command, returncode, stdout, stderr, start_time, end_time, duration)
 
-Start Time: {start_time}
-End Time: {end_time}
-Duration: {duration}
-"""
     if duration < datetime.timedelta(seconds=minimal_notify_running_seconds):
         print(f"Skipping email notification as the command completed in less than 10 seconds.")
-        print(email_body_header)
+        print(email_body)
         sys.exit(returncode)
 
     tempdir = tempfile.TemporaryDirectory("notifyrun")
@@ -200,16 +248,16 @@ Duration: {duration}
             stdout_zip = compress_logs(stdout, tempdir.name, "stdout")
             stderr_zip = compress_logs(stderr, tempdir.name, "stderr")
             attachments = [stdout_zip, stderr_zip]
-            email_body = f"{email_body_header}\nStandard Output and Error are attached as compressed files.\n"
+            email_body += f"\nStandard Output and Error are attached as compressed files.\n"
         else:
-            email_body = f"{email_body_header}\nStandard Output:\n{stdout}\nStandard Error:\n{stderr}\n"
+            email_body += f"\nStandard Output:\n{stdout}\nStandard Error:\n{stderr}\n"
 
         if not send_email(
             email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, attachments
         ):
             print(f"Error sending email, Temporary files are stored at {tempdir.name}")
             print("Trying the fallback method...")
-            email_body = f"{email_body_header}\nError sending email, Temporary files are stored at {tempdir.name}"
+            email_body = f"{email_body}\nError sending email, Temporary files are stored at {tempdir.name}"
             if not send_email(
                 email_subject, email_body, to_address, smtp_server, smtp_port, smtp_user, smtp_password, []
             ):
